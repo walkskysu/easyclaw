@@ -1,0 +1,12 @@
+<available_skills>
+  <skill>
+    <name>Agent Browser</name>
+    <description>A fast Rust-based headless browser automation CLI with Node.js fallback that enables AI agents to navigate, click, type, and snapshot pages via structured commands.</description>
+    <location>C:\Projects\clawdiy\skills\agent-browser\SKILL.md</location>
+  </skill>
+  <skill>
+    <name>docx-generator-cn</name>
+    <description>mmbc---</description>
+    <location>C:\Projects\clawdiy\skills\docx-generator-cn\SKILL.md</location>
+  </skill>
+</available_skills>
