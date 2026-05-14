@@ -173,3 +173,30 @@ pip install python-docx
 ## 许可协议
 
 MIT
+
+## 启动方式
+
+### 前端启动
+
+在项目根目录下运行：
+
+```
+npm run dev
+```
+
+如需 Electron 预览：
+
+```
+npm run electron-dev
+```
+
+### 后端启动
+
+在项目根目录下运行：
+
+```
+npm run server
+```
+
+前端通过 conf/client.conf 配置 server_url，可用 http 或 https。
+后端 server.conf 配置端口等参数，默认 http://localhost:8080。

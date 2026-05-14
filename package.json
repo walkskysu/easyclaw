@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "server": "node src/server/server.js",
     "electron": "electron .",
     "electron-dev": "set ELECTRON_RENDERER_URL=http://127.0.0.1:5173&& concurrently -k \"vite --host 127.0.0.1 --port 5173\" \"wait-on tcp:5173 && electron .\"",
     "electron-build": "vite build && electron-builder"
@@ -15,9 +16,12 @@
   "dependencies": {
     "@wechatbot/wechatbot": "^2.1.1",
     "axios": "^1.5.0",
+    "body-parser": "^1.20.2",
     "dompurify": "^3.0.6",
+    "express": "^4.18.2",
     "marked": "^11.1.1",
-    "vue": "^3.3.4"
+    "vue": "^3.3.4",
+    "ws": "^8.14.2"
   },
   "devDependencies": {
     "@types/dompurify": "^3.0.2",
