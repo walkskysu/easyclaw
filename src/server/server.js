@@ -1,19 +1,36 @@
 // server.js
-// Node.js 后端服务，支持 HTTPS，接收 web 和 weixin 消息，转发给大模型并同步消息
+// Node.js 后端服务，接收 web 和 weixin 消息，转发给大模型并同步消息
 
 const fs = require('fs');
 const http = require('http');
 const express = require('express');
 const path = require('path');
 const bodyParser = require('body-parser');
+const axios = require('axios');
 
-// 读取 server.conf
 const confPath = path.resolve(__dirname, '../../conf/server.conf');
-const config = {};
-fs.readFileSync(confPath, 'utf-8').split(/\r?\n/).forEach(line => {
-  const m = line.match(/^\s*([^#][^=]*)=(.*)$/);
-  if (m) config[m[1].trim()] = m[2].trim();
-});
+
+function readServerConf() {
+  const conf = {};
+  const content = fs.readFileSync(confPath, 'utf-8');
+  content.split(/\r?\n/).forEach((line) => {
+    const match = line.match(/^\s*([^#][^=]*)=(.*)$/);
+    if (match) {
+      conf[match[1].trim()] = match[2].trim();
+    }
+  });
+  return conf;
+}
+
+function requireConfig(conf, keys) {
+  const missing = keys.filter((key) => !String(conf[key] || '').trim());
+  if (missing.length > 0) {
+    throw new Error(`server.conf 缺少必填配置: ${missing.join(', ')}`);
+  }
+}
+
+const config = readServerConf();
+requireConfig(config, ['LLM_API_URL', 'LLM_MODEL', 'LLM_API_KEY']);
 
 const app = express();
 app.use(bodyParser.json());
@@ -23,6 +40,38 @@ const logDir = path.resolve(__dirname, '../../logs/server');
 if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
 function logWrite(filename, entry) {
   fs.appendFileSync(path.join(logDir, filename), entry + '\n', 'utf-8');
+}
+
+async function callLLM(messageText) {
+  const requestBody = {
+    model: config.LLM_MODEL,
+    messages: [
+      { role: 'user', content: String(messageText || '') },
+    ],
+  };
+
+  const response = await axios.post(
+    config.LLM_API_URL,
+    requestBody,
+    {
+      headers: {
+        Authorization: `Bearer ${config.LLM_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 180000,
+    },
+  );
+
+  const text = response.data?.choices?.[0]?.message?.content;
+  return typeof text === 'string' ? text : '';
+}
+
+function broadcastToWeb(payload) {
+  const message = JSON.stringify(payload);
+  webClients = webClients.filter((client) => client && client.readyState === 1);
+  webClients.forEach((client) => {
+    client.send(message);
+  });
 }
 
 // 消息同步（简单内存广播，生产环境建议用消息队列）
@@ -51,23 +100,60 @@ server.on('upgrade', (req, socket, head) => {
 
 // Web 消息入口
 app.post('/api/web/message', async (req, res) => {
-  const msg = req.body;
-  logWrite('web.log', `[${new Date().toISOString()}] web: ${JSON.stringify(msg)}`);
-  // TODO: 调用大模型
-  // TODO: 消息同步到 weixin
-  res.json({ ok: true });
+  try {
+    const msg = req.body;
+    const userText = typeof msg?.text === 'string' ? msg.text : JSON.stringify(msg || {});
+    logWrite('web.log', `[${new Date().toISOString()}] web: ${JSON.stringify(msg)}`);
+
+    const llmReply = await callLLM(userText);
+    const payload = {
+      source: 'web',
+      input: userText,
+      reply: llmReply,
+      ts: new Date().toISOString(),
+    };
+
+    broadcastToWeb(payload);
+    logWrite('web.log', `[${new Date().toISOString()}] llm: ${JSON.stringify(payload)}`);
+    // TODO: 同步到 weixin 通道
+    res.json({ ok: true, reply: llmReply });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logWrite('web.log', `[${new Date().toISOString()}] error: ${message}`);
+    res.status(500).json({ ok: false, error: message });
+  }
 });
 
 // Weixin 消息入口
 app.post('/api/weixin/message', async (req, res) => {
-  const msg = req.body;
-  logWrite('weixin.log', `[${new Date().toISOString()}] weixin: ${JSON.stringify(msg)}`);
-  // TODO: 调用大模型
-  // TODO: 消息同步到 web
-  res.json({ ok: true });
+  try {
+    const msg = req.body;
+    const userText = typeof msg?.text === 'string' ? msg.text : JSON.stringify(msg || {});
+    logWrite('weixin.log', `[${new Date().toISOString()}] weixin: ${JSON.stringify(msg)}`);
+
+    const llmReply = await callLLM(userText);
+    const payload = {
+      source: 'weixin',
+      input: userText,
+      reply: llmReply,
+      ts: new Date().toISOString(),
+    };
+
+    broadcastToWeb(payload);
+    logWrite('weixin.log', `[${new Date().toISOString()}] llm: ${JSON.stringify(payload)}`);
+    // TODO: 同步到 weixin 实际发送器
+    res.json({ ok: true, reply: llmReply });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logWrite('weixin.log', `[${new Date().toISOString()}] error: ${message}`);
+    res.status(500).json({ ok: false, error: message });
+  }
 });
 
 const port = config.port || 8080;
 server.listen(port, () => {
   console.log(`HTTP server running on port ${port}`);
+  console.log(`LLM config source: ${confPath}`);
+  console.log(`LLM_API_URL=${config.LLM_API_URL}`);
+  console.log(`LLM_MODEL=${config.LLM_MODEL}`);
 });

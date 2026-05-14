@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "server": "node src/server/server.js",
     "electron": "electron .",
-    "electron-dev": "set ELECTRON_RENDERER_URL=http://127.0.0.1:5173&& concurrently -k \"vite --host 127.0.0.1 --port 5173\" \"wait-on tcp:5173 && electron .\"",
+    "electron-dev": "node scripts/electron-dev.cjs",
     "electron-build": "vite build && electron-builder"
   },
   "dependencies": {
