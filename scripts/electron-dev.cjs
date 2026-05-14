@@ -111,53 +111,11 @@ async function waitForDevServer(devHost, devPort, timeoutMs) {
     throw new Error(`Timed out waiting for dev server on port ${devPort}`)
 }
 
-async function main() {
-    const preferredPort = readDevServerPort()
-    const devPort = await pickDevPort(preferredPort)
-    const devHost = '127.0.0.1'
-    const rendererUrl = `http://${devHost}:${devPort}`
-    if (devPort !== preferredPort) {
-        console.log(`[electron-dev] preferred port ${preferredPort} is busy, using ${devPort}`)
-    }
-
-    let electronStarted = false
-    const viteProcess = spawnNpm('dev', {
-        VITE_DEV_HOST: devHost,
-        VITE_DEV_PORT: String(devPort),
-    })
-
-    const shutdown = () => {
-        if (!viteProcess.killed) {
-            viteProcess.kill()
-        }
-    }
-
-    process.on('SIGINT', shutdown)
-    process.on('SIGTERM', shutdown)
-    process.on('exit', shutdown)
-
-    viteProcess.on('error', (error) => {
-        console.error('[electron-dev] failed to start vite:', error)
-        process.exit(1)
-    })
-
-    viteProcess.on('close', (code) => {
-        if (!electronStarted && (code ?? 0) !== 0) {
-            console.error(`[electron-dev] vite exited early with code ${code ?? 1}.`)
-            process.exit(code ?? 1)
-        }
-    })
-
-    await waitForDevServer(devHost, devPort, 120000)
-
-    electronStarted = true
-    const electronProcess = spawnNpm('electron', {
-        ELECTRON_RENDERER_URL: rendererUrl,
-    })
+function main() {
+    const electronProcess = spawnNpm('electron')
 
     electronProcess.on('error', (error) => {
         console.error('[electron-dev] failed to start electron:', error)
-        shutdown()
         process.exit(1)
     })
 
@@ -171,12 +129,8 @@ async function main() {
     process.on('SIGTERM', killElectron)
 
     electronProcess.on('close', (code) => {
-        shutdown()
         process.exitCode = code ?? 0
     })
 }
 
-main().catch((error) => {
-    console.error(error)
-    process.exit(1)
-})
+main()

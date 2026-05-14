@@ -5,7 +5,7 @@
   "main": "electron/main.cjs",
   "homepage": "./",
   "scripts": {
-    "dev": "vite",
+    "dev": "npm run server",
     "build": "vite build",
     "preview": "vite preview",
     "server": "node src/server/server.js",
