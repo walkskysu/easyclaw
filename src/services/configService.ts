@@ -1,4 +1,5 @@
 export interface Config {
+  SERVER_URL: string
   LLM_API_URL: string
   LLM_MODEL: string
   LLM_API_KEY: string
@@ -7,11 +8,13 @@ export interface Config {
 }
 
 interface ElectronConfigAPI {
+  getServerUrl: () => Promise<string>
   getConfig: () => Promise<Config>
-  saveConfig: (config: Config) => Promise<{ ok: boolean; configPath: string }>
+  saveConfig: (config: Config) => Promise<{ ok: boolean; configPath: string; serverConfPath: string; clientConfPath: string }>
 }
 
 const defaultConfig: Config = {
+  SERVER_URL: 'http://localhost:8080',
   LLM_API_URL: 'https://api.openai.com/v1/chat/completions',
   LLM_MODEL: 'gpt-4o-mini',
   LLM_API_KEY: '',
@@ -29,6 +32,7 @@ const normalizeNumber = (value: unknown, fallback: number): number => {
 
 const normalizeConfig = (raw: Partial<Config> | null | undefined): Config => {
   return {
+    SERVER_URL: String(raw?.SERVER_URL ?? defaultConfig.SERVER_URL).trim(),
     LLM_API_URL: String(raw?.LLM_API_URL ?? defaultConfig.LLM_API_URL).trim(),
     LLM_MODEL: String(raw?.LLM_MODEL ?? defaultConfig.LLM_MODEL).trim(),
     LLM_API_KEY: String(raw?.LLM_API_KEY ?? defaultConfig.LLM_API_KEY).trim(),
@@ -37,43 +41,55 @@ const normalizeConfig = (raw: Partial<Config> | null | undefined): Config => {
   }
 }
 
+export const createDefaultConfig = (): Config => ({ ...defaultConfig })
+
 const getElectronAPI = (): ElectronConfigAPI | null => {
   const api = (window as unknown as { electronAPI?: ElectronConfigAPI }).electronAPI
   return api ?? null
 }
 
-export const getConfig = async (): Promise<Config> => {
+export const getServerUrl = async (): Promise<string> => {
   const api = getElectronAPI()
   if (api) {
+    return api.getServerUrl()
+  }
+  return localStorage.getItem('server-url') || 'http://localhost:8080'
+}
+
+export const getConfig = async (): Promise<Config> => {
+  const api = getElectronAPI()
+  if (api?.getConfig) {
     const cfg = await api.getConfig()
     return normalizeConfig(cfg)
   }
 
-  // Browser fallback for non-electron preview mode
   const stored = localStorage.getItem('llm-config')
-  if (!stored) return { ...defaultConfig }
+  if (!stored) {
+    return createDefaultConfig()
+  }
 
   try {
     return normalizeConfig(JSON.parse(stored) as Partial<Config>)
   } catch {
-    return { ...defaultConfig }
+    return createDefaultConfig()
   }
 }
 
 export const saveConfig = async (config: Config): Promise<void> => {
-  const payload: Config = normalizeConfig(config)
-
+  const payload = normalizeConfig(config)
   const api = getElectronAPI()
-  if (api) {
+  if (api?.saveConfig) {
     await api.saveConfig(payload)
     return
   }
 
   localStorage.setItem('llm-config', JSON.stringify(payload))
+  localStorage.setItem('server-url', payload.SERVER_URL)
 }
 
 export const validateConfig = (config: Config): boolean => {
   return !!(
+    config.SERVER_URL?.trim() &&
     config.LLM_API_URL?.trim() &&
     config.LLM_MODEL?.trim() &&
     config.LLM_API_KEY?.trim() &&

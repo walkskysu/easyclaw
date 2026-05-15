@@ -75,6 +75,134 @@ function getSkillsDirPath() {
     return path.join(getAppRootPath(), 'skills')
 }
 
+const DEFAULT_LLM_CONFIG = {
+    SERVER_URL: 'http://localhost:8080',
+    LLM_API_URL: 'https://api.openai.com/v1/chat/completions',
+    LLM_MODEL: 'gpt-4o-mini',
+    LLM_API_KEY: '',
+    MAX_TOOL_ROUNDS: 8,
+    MAX_SKILL_READ_CALLS: 3,
+}
+
+const SERVER_SYNC_KEYS = [
+    'LLM_API_URL',
+    'LLM_MODEL',
+    'LLM_API_KEY',
+    'MAX_TOOL_ROUNDS',
+    'MAX_SKILL_READ_CALLS',
+]
+
+function normalizeNumber(value, fallback) {
+    const n = Number(value)
+    if (!Number.isFinite(n)) return fallback
+    return Math.max(0, Math.floor(n))
+}
+
+function normalizeRuntimeConfig(raw) {
+    return {
+        SERVER_URL: String(raw?.SERVER_URL ?? raw?.server_url ?? DEFAULT_LLM_CONFIG.SERVER_URL).trim(),
+        LLM_API_URL: String(raw?.LLM_API_URL ?? DEFAULT_LLM_CONFIG.LLM_API_URL).trim(),
+        LLM_MODEL: String(raw?.LLM_MODEL ?? DEFAULT_LLM_CONFIG.LLM_MODEL).trim(),
+        LLM_API_KEY: String(raw?.LLM_API_KEY ?? DEFAULT_LLM_CONFIG.LLM_API_KEY).trim(),
+        MAX_TOOL_ROUNDS: normalizeNumber(raw?.MAX_TOOL_ROUNDS, DEFAULT_LLM_CONFIG.MAX_TOOL_ROUNDS),
+        MAX_SKILL_READ_CALLS: normalizeNumber(raw?.MAX_SKILL_READ_CALLS, DEFAULT_LLM_CONFIG.MAX_SKILL_READ_CALLS),
+    }
+}
+
+function getServerConfPath() {
+    return path.join(getAppRootPath(), 'conf', 'server.conf')
+}
+
+function getClientConfPath() {
+    return path.join(getAppRootPath(), 'conf', 'client.conf')
+}
+
+function parseKeyValueConf(filePath) {
+    if (!fs.existsSync(filePath)) {
+        return {}
+    }
+
+    const result = {}
+    const content = fs.readFileSync(filePath, 'utf-8')
+    for (const line of content.split(/\r?\n/)) {
+        const match = line.match(/^\s*([^#][^=]*)=(.*)$/)
+        if (!match) continue
+        result[match[1].trim()] = match[2].trim()
+    }
+    return result
+}
+
+function readRuntimeConfigFromWorkspace() {
+    return normalizeRuntimeConfig({
+        ...parseKeyValueConf(getServerConfPath()),
+        ...parseKeyValueConf(getClientConfPath()),
+    })
+}
+
+function syncConfigToServerConf(config) {
+    const serverConfPath = getServerConfPath()
+    const nextValues = {
+        LLM_API_URL: String(config.LLM_API_URL),
+        LLM_MODEL: String(config.LLM_MODEL),
+        LLM_API_KEY: String(config.LLM_API_KEY),
+        MAX_TOOL_ROUNDS: String(config.MAX_TOOL_ROUNDS),
+        MAX_SKILL_READ_CALLS: String(config.MAX_SKILL_READ_CALLS),
+    }
+
+    let lines = []
+    if (fs.existsSync(serverConfPath)) {
+        lines = fs.readFileSync(serverConfPath, 'utf-8').split(/\r?\n/)
+    }
+
+    const updated = new Set()
+    const keyPattern = new RegExp(`^(\\s*)(${SERVER_SYNC_KEYS.join('|')})(\\s*=\\s*)(.*)$`)
+
+    const rewritten = lines.map((line) => {
+        const match = line.match(keyPattern)
+        if (!match) return line
+        const [, prefix, key, separator] = match
+        updated.add(key)
+        return `${prefix}${key}${separator}${nextValues[key]}`
+    })
+
+    for (const key of SERVER_SYNC_KEYS) {
+        if (!updated.has(key)) {
+            rewritten.push(`${key}=${nextValues[key]}`)
+        }
+    }
+
+    fs.mkdirSync(path.dirname(serverConfPath), { recursive: true })
+    fs.writeFileSync(serverConfPath, `${rewritten.join('\n')}\n`, 'utf-8')
+    return serverConfPath
+}
+
+function syncConfigToClientConf(config) {
+    const clientConfPath = getClientConfPath()
+    const serverUrl = String(config.SERVER_URL || DEFAULT_LLM_CONFIG.SERVER_URL)
+
+    let lines = []
+    if (fs.existsSync(clientConfPath)) {
+        lines = fs.readFileSync(clientConfPath, 'utf-8').split(/\r?\n/)
+    }
+
+    let updated = false
+    const rewritten = lines.map((line) => {
+        const match = line.match(/^(\s*)server_url(\s*=\s*)(.*)$/)
+        if (!match) return line
+        updated = true
+        const [, prefix, separator] = match
+        return `${prefix}server_url${separator}${serverUrl}`
+    })
+
+    if (!updated) {
+        rewritten.push(`server_url=${serverUrl}`)
+    }
+
+    fs.mkdirSync(path.dirname(clientConfPath), { recursive: true })
+    fs.writeFileSync(clientConfPath, `${rewritten.join('\n')}\n`, 'utf-8')
+    return clientConfPath
+}
+
 function xmlEscape(value) {
     return String(value ?? '')
         .replaceAll('&', '&amp;')
@@ -579,13 +707,7 @@ async function invokeTool(name, args) {
 function ensureConfig() {
     const configPath = getConfigPath()
     if (!fs.existsSync(configPath)) {
-        const defaults = {
-            LLM_API_URL: 'https://api.openai.com/v1/chat/completions',
-            LLM_MODEL: 'gpt-4o-mini',
-            LLM_API_KEY: '',
-            MAX_TOOL_ROUNDS: 8,
-            MAX_SKILL_READ_CALLS: 3,
-        }
+        const defaults = readRuntimeConfigFromWorkspace()
         fs.writeFileSync(configPath, JSON.stringify(defaults, null, 2), 'utf-8')
     }
     return configPath
@@ -614,16 +736,25 @@ function createWindow() {
     })
 }
 
+ipcMain.handle('client:getServerUrl', async () => {
+    return readRuntimeConfigFromWorkspace().SERVER_URL
+})
+
 ipcMain.handle('config:get', async () => {
     const configPath = ensureConfig()
     const raw = fs.readFileSync(configPath, 'utf-8')
-    return JSON.parse(raw)
+    const stored = normalizeRuntimeConfig(JSON.parse(raw))
+    const workspaceConfig = readRuntimeConfigFromWorkspace()
+    return normalizeRuntimeConfig({ ...stored, ...workspaceConfig })
 })
 
 ipcMain.handle('config:save', async (_event, config) => {
     const configPath = ensureConfig()
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
-    return { ok: true, configPath }
+    const normalized = normalizeRuntimeConfig(config)
+    fs.writeFileSync(configPath, JSON.stringify(normalized, null, 2), 'utf-8')
+    const serverConfPath = syncConfigToServerConf(normalized)
+    const clientConfPath = syncConfigToClientConf(normalized)
+    return { ok: true, configPath, serverConfPath, clientConfPath }
 })
 
 ipcMain.handle('config:path', async () => {

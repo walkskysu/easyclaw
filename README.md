@@ -16,8 +16,8 @@
   - 显示消息时间戳
   - 支持流式状态提示（例如“调用 tool 中”）
 - 配置管理
-  - 首次启动自动生成配置文件
-  - UI 内可直接修改模型地址、模型名、API Key
+  - 客户端仅维护 `conf/client.conf` 中的 server 地址
+  - 模型参数统一由 `conf/server.conf` 管理
   - 可配置最大工具调用轮次和最大 Skill 读取次数
 - Agent + Tool
   - 从 `agent/` 目录拼装系统提示词
@@ -47,7 +47,7 @@
 clawdiy/
 ├─ electron/                # Electron 主进程与 preload
 ├─ src/                     # Vue 渲染进程代码
-│  ├─ services/             # 配置与 LLM 调用逻辑
+│  ├─ services/             # 客户端配置读取
 │  └─ App.vue               # 主界面
 ├─ agent/                   # Agent 提示词、工具定义、技能索引
 ├─ skills/                  # 可扩展技能目录（每个技能一个子目录）
@@ -79,24 +79,27 @@ npm run electron-dev
 
 该命令会同时启动 Vite 与 Electron。
 
-3. 首次启动后，在右上角点击“配置”填写模型参数。
+3. 启动前先填写 `conf/server.conf` 中的模型参数，`conf/client.conf` 中填写 server 地址。
 
 ## 配置说明
 
-配置文件会在首次运行时自动创建，默认路径：
+服务端配置位于 `conf/server.conf`，客户端连接地址位于 `conf/client.conf`。
 
-- `%APPDATA%\llm-chat-electron\llm.config.json`
+`conf/server.conf` 示例：
 
-示例：
+```ini
+port=8080
+LLM_API_URL=https://api.openai.com/v1/chat/completions
+LLM_MODEL=gpt-4o-mini
+LLM_API_KEY=your-api-key
+MAX_TOOL_ROUNDS=8
+MAX_SKILL_READ_CALLS=3
+```
 
-```json
-{
-  "LLM_API_URL": "https://api.openai.com/v1/chat/completions",
-  "LLM_MODEL": "gpt-4o-mini",
-  "LLM_API_KEY": "your-api-key",
-  "MAX_TOOL_ROUNDS": 8,
-  "MAX_SKILL_READ_CALLS": 3
-}
+`conf/client.conf` 示例：
+
+```ini
+server_url=http://localhost:8080
 ```
 
 字段说明：
@@ -106,10 +109,11 @@ npm run electron-dev
 - `LLM_API_KEY`: 接口密钥
 - `MAX_TOOL_ROUNDS`: 单次请求允许的工具调用总次数上限
 - `MAX_SKILL_READ_CALLS`: 单次请求允许读取 Skill 文档次数上限
+- `server_url`: 客户端通过 WebSocket 连接的 server 地址
 
 ## NPM 脚本
 
-- `npm run dev`: 仅启动 Vite
+- `npm run dev`: 启动 Node.js server
 - `npm run build`: 构建前端产物
 - `npm run preview`: 预览构建产物
 - `npm run electron`: 启动 Electron（基于已构建资源）
@@ -160,7 +164,7 @@ pip install python-docx
 
 ### 1) 启动后无法对话
 
-通常是配置不完整。请在“配置”中填写 `LLM_API_URL`、`LLM_MODEL`、`LLM_API_KEY` 后保存。
+通常是 `conf/server.conf` 或 `conf/client.conf` 配置不完整。请检查 `LLM_API_URL`、`LLM_MODEL`、`LLM_API_KEY` 与 `server_url`。
 
 ### 2) 工具调用循环过多
 

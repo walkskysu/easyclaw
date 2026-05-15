@@ -3,14 +3,62 @@
     <header class="header">
       <h1>LLM Chat</h1>
       <div class="header-actions">
+        <span class="conn-status" :class="connected ? 'conn-ok' : 'conn-err'">
+          {{ connected ? '已连接服务器' : (connecting ? '连接中...' : '未连接') }}
+        </span>
+        <button class="config-btn" :disabled="configLoading || savingConfig" @click="openConfigDialog">
+          {{ configLoading ? '读取中...' : '配置' }}
+        </button>
         <button class="config-btn" :disabled="refreshingSkills" @click="refreshSkills">
           {{ refreshingSkills ? '刷新中...' : '刷新skill' }}
         </button>
-        <button class="config-btn" @click="showConfig = true">配置</button>
       </div>
     </header>
 
     <p v-if="skillStatus" class="skill-status">{{ skillStatus }}</p>
+
+    <div v-if="showConfigDialog" class="dialog-mask" @click.self="closeConfigDialog">
+      <section class="dialog-card">
+        <div class="dialog-header">
+          <h2>客户端配置</h2>
+          <button class="dialog-close" :disabled="savingConfig" @click="closeConfigDialog">关闭</button>
+        </div>
+
+        <label class="form-field">
+          <span>Server 地址</span>
+          <input v-model.trim="configForm.SERVER_URL" class="form-input" placeholder="http://localhost:8080" />
+        </label>
+        <label class="form-field">
+          <span>LLM API URL</span>
+          <input v-model.trim="configForm.LLM_API_URL" class="form-input" placeholder="https://api.openai.com/v1/chat/completions" />
+        </label>
+        <label class="form-field">
+          <span>模型名称</span>
+          <input v-model.trim="configForm.LLM_MODEL" class="form-input" placeholder="gpt-4o-mini" />
+        </label>
+        <label class="form-field">
+          <span>API Key</span>
+          <input v-model.trim="configForm.LLM_API_KEY" type="password" class="form-input" placeholder="your-api-key" />
+        </label>
+        <label class="form-field">
+          <span>最大工具调用轮次</span>
+          <input v-model.number="configForm.MAX_TOOL_ROUNDS" type="number" min="1" class="form-input" />
+        </label>
+        <label class="form-field">
+          <span>最大 Skill 读取次数</span>
+          <input v-model.number="configForm.MAX_SKILL_READ_CALLS" type="number" min="0" class="form-input" />
+        </label>
+
+        <p v-if="configStatus" class="config-status">{{ configStatus }}</p>
+
+        <div class="dialog-actions">
+          <button class="ghost-btn" :disabled="savingConfig" @click="closeConfigDialog">取消</button>
+          <button class="save-btn" :disabled="savingConfig" @click="submitConfig">
+            {{ savingConfig ? '保存中...' : '保存配置' }}
+          </button>
+        </div>
+      </section>
+    </div>
 
     <main ref="messagesContainer" class="messages">
       <div v-for="(msg, index) in messages" :key="index" class="row"
@@ -23,60 +71,27 @@
         </div>
       </div>
       <div v-if="loading" class="row row-ai">
-        <article class="bubble bubble-ai">思考中...</article>
+        <article class="bubble bubble-ai">{{ statusText || '思考中...' }}</article>
       </div>
     </main>
 
     <footer class="composer">
       <textarea v-model="inputText" class="input" placeholder="输入消息，Enter 发送，Ctrl+Enter 换行"
+        :disabled="!connected || loading"
         @keydown.enter.exact.prevent="sendMessage" />
-      <button class="send" :disabled="loading || !inputText.trim()" @click="sendMessage">
+      <button class="send" :disabled="!connected || loading || !inputText.trim()" @click="sendMessage">
         发送
       </button>
     </footer>
 
-    <section v-if="showConfig" class="overlay">
-      <div class="modal">
-        <h2>模型配置</h2>
-        <label class="field">
-          <span>LLM_API_URL</span>
-          <input v-model="configData.LLM_API_URL" type="text"
-            placeholder="https://api.openai.com/v1/chat/completions" />
-        </label>
-        <label class="field">
-          <span>LLM_MODEL</span>
-          <input v-model="configData.LLM_MODEL" type="text" placeholder="gpt-4o-mini" />
-        </label>
-        <label class="field">
-          <span>LLM_API_KEY</span>
-          <input v-model="configData.LLM_API_KEY" type="password" placeholder="sk-..." />
-        </label>
-        <label class="field">
-          <span>MAX_TOOL_ROUNDS</span>
-          <input v-model.number="configData.MAX_TOOL_ROUNDS" type="number" min="1" max="100" />
-        </label>
-        <label class="field">
-          <span>MAX_SKILL_READ_CALLS</span>
-          <input v-model.number="configData.MAX_SKILL_READ_CALLS" type="number" min="0" max="100" />
-        </label>
-        <div class="actions">
-          <button class="ghost" type="button" @click="showConfig = false">取消</button>
-          <button class="send" type="button" :disabled="savingConfig" @click="saveAndInit">
-            {{ savingConfig ? '保存中...' : '保存' }}
-          </button>
-        </div>
-        <p v-if="configError" class="config-error">{{ configError }}</p>
-      </div>
-    </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, ref } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
-import { getConfig, saveConfig, validateConfig, type Config } from './services/configService'
-import { getLLMResponse, initializeLLMService } from './services/llmService'
+import { createDefaultConfig, getConfig, getServerUrl, saveConfig, validateConfig, type Config } from './services/configService'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -94,26 +109,26 @@ interface AppElectronAPI {
   refreshAvailableSkills?: () => Promise<RefreshSkillsResult>
   onWechatMessage?: (callback: (data: { userId: string; text: string }) => void) => void
   sendToWechat?: (userId: string, text: string) => Promise<{ ok: boolean; error?: string }>
+  getServerUrl?: () => Promise<string>
 }
 
 const messages = ref<Message[]>([])
 const inputText = ref('')
 const loading = ref(false)
-const showConfig = ref(false)
-const savingConfig = ref(false)
-const configError = ref('')
+const statusText = ref('')
+const connected = ref(false)
+const connecting = ref(false)
 const messagesContainer = ref<HTMLElement | null>(null)
 const refreshingSkills = ref(false)
 const skillStatus = ref('')
-// WeChat: track last active user to forward web/LLM messages to
 const lastWechatUserId = ref<string | null>(null)
-const configData = ref<Config>({
-  LLM_API_URL: '',
-  LLM_MODEL: '',
-  LLM_API_KEY: '',
-  MAX_TOOL_ROUNDS: 8,
-  MAX_SKILL_READ_CALLS: 3,
-})
+const showConfigDialog = ref(false)
+const configLoading = ref(false)
+const savingConfig = ref(false)
+const configStatus = ref('')
+const configForm = ref<Config>(createDefaultConfig())
+
+let ws: WebSocket | null = null
 
 marked.setOptions({ breaks: true, gfm: true })
 
@@ -175,106 +190,178 @@ const scrollToBottom = async () => {
   }
 }
 
-const saveAndInit = async () => {
-  configError.value = ''
-  if (!validateConfig(configData.value)) {
-    configError.value = '请检查配置：URL/模型/API Key 必填，MAX_TOOL_ROUNDS > 0，MAX_SKILL_READ_CALLS >= 0'
+const closeCurrentSocket = () => {
+  if (ws) {
+    ws.close()
+    ws = null
+  }
+  connected.value = false
+  connecting.value = false
+  loading.value = false
+  statusText.value = ''
+}
+
+const closeConfigDialog = () => {
+  if (savingConfig.value) return
+  showConfigDialog.value = false
+  configStatus.value = ''
+}
+
+const openConfigDialog = async () => {
+  if (configLoading.value) return
+
+  configLoading.value = true
+  configStatus.value = ''
+  showConfigDialog.value = true
+
+  try {
+    configForm.value = await getConfig()
+  } catch (error) {
+    configStatus.value = `读取配置失败: ${error instanceof Error ? error.message : '未知错误'}`
+  } finally {
+    configLoading.value = false
+  }
+}
+
+const submitConfig = async () => {
+  if (savingConfig.value) return
+
+  if (!validateConfig(configForm.value)) {
+    configStatus.value = '配置不完整，请检查 Server 地址、模型地址、模型名、API Key 和次数限制。'
     return
   }
 
   savingConfig.value = true
+  configStatus.value = ''
+
   try {
-    await saveConfig(configData.value)
-    await initializeLLMService()
-    showConfig.value = false
-    pushMessage('assistant', '配置已保存，可以开始对话。')
+    await saveConfig(configForm.value)
+    closeCurrentSocket()
+    connectWebSocket(configForm.value.SERVER_URL)
+    showConfigDialog.value = false
+    skillStatus.value = '配置已保存。'
+    pushMessage('assistant', `配置已保存，已切换到服务器 ${configForm.value.SERVER_URL}。如模型配置已变更，请确认 server 端已加载最新配置。`)
     await scrollToBottom()
   } catch (error) {
-    configError.value = `保存失败: ${error instanceof Error ? error.message : '未知错误'}`
+    configStatus.value = `保存失败: ${error instanceof Error ? error.message : '未知错误'}`
   } finally {
     savingConfig.value = false
   }
 }
 
+// ─── WebSocket 连接 ────────────────────────────────────────────────────────────
+
+function toWsUrl(httpUrl: string): string {
+  return httpUrl.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:')
+}
+
+function connectWebSocket(serverUrl: string) {
+  connecting.value = true
+  connected.value = false
+  statusText.value = ''
+
+  const wsUrl = toWsUrl(serverUrl)
+  const socket = new WebSocket(wsUrl)
+  ws = socket
+
+  socket.onopen = () => {
+    connected.value = true
+    connecting.value = false
+    pushMessage('assistant', `已连接服务器 ${serverUrl}，可以开始对话。`)
+    scrollToBottom()
+  }
+
+  socket.onerror = () => {
+    if (ws === socket) {
+      connected.value = false
+      connecting.value = false
+      pushMessage('assistant', `无法连接服务器 ${serverUrl}，请确认服务器已启动并检查 conf/client.conf 配置。`)
+      scrollToBottom()
+    }
+  }
+
+  socket.onclose = () => {
+    if (ws === socket) {
+      connected.value = false
+      connecting.value = false
+      loading.value = false
+    }
+  }
+
+  socket.onmessage = async (event: MessageEvent) => {
+    try {
+      const msg = JSON.parse(event.data as string) as { type: string; text: string }
+      if (msg.type === 'status') {
+        statusText.value = msg.text
+      } else if (msg.type === 'reply') {
+        loading.value = false
+        statusText.value = ''
+        pushMessage('assistant', msg.text)
+        if (lastWechatUserId.value) {
+          forwardToWechat(lastWechatUserId.value, msg.text)
+        }
+        await scrollToBottom()
+      } else if (msg.type === 'error') {
+        loading.value = false
+        statusText.value = ''
+        pushMessage('assistant', `请求失败: ${msg.text}`)
+        await scrollToBottom()
+      }
+    } catch {
+      // ignore malformed messages
+    }
+  }
+}
+
 const sendMessage = async () => {
   const content = inputText.value.trim()
-  if (!content || loading.value) return
+  if (!content || loading.value || !connected.value || !ws) return
 
   pushMessage('user', content)
   inputText.value = ''
   loading.value = true
+  statusText.value = ''
   await scrollToBottom()
 
-  // (2) Forward web message to WeChat with "web端：" prefix
+  // Forward web message to WeChat with "web端：" prefix
   if (lastWechatUserId.value) {
     forwardToWechat(lastWechatUserId.value, `web端：${content}`)
   }
 
-  try {
-    const reply = await getLLMResponse(content, async (statusText) => {
-      pushMessage('assistant', statusText)
-      await scrollToBottom()
-    })
-    pushMessage('assistant', reply)
-    // (3) LLM response → WeChat
-    if (lastWechatUserId.value) {
-      forwardToWechat(lastWechatUserId.value, reply)
-    }
-  } catch (error) {
-    const text = error instanceof Error ? error.message : 'Unknown error'
-    pushMessage('assistant', `请求失败: ${text}`)
-  } finally {
-    loading.value = false
-    await scrollToBottom()
-  }
+  ws.send(JSON.stringify({ type: 'chat', message: content }))
 }
 
 onMounted(async () => {
   await runRefreshSkills(true)
 
-  const cfg = await getConfig()
-  configData.value = cfg
-
-  if (!validateConfig(cfg)) {
-    showConfig.value = true
-    pushMessage('assistant', '请先点击右上角“配置”，填写接口地址、模型名和 API Key。')
-  } else {
-    try {
-      await initializeLLMService()
-      pushMessage('assistant', '你好，我已连接模型，可以开始对话。')
-    } catch (error) {
-      showConfig.value = true
-      pushMessage('assistant', `初始化失败: ${(error as Error).message}`)
-    }
+  // 读取 client.conf 中的服务器地址并建立 WebSocket 连接
+  try {
+    const serverUrl = await getServerUrl()
+    connectWebSocket(serverUrl)
+  } catch (error) {
+    pushMessage('assistant', `无法读取服务器配置: ${(error as Error).message}`)
   }
-  // (1) Register WeChat incoming message handler
+
+  // Register WeChat incoming message handler
   getElectronAPI()?.onWechatMessage?.(async ({ userId, text }) => {
     lastWechatUserId.value = userId
-    // Show incoming WeChat message in web UI
     pushMessage('user', `[来自微信] ${text}`)
     await scrollToBottom()
 
-    // Send to LLM and broadcast reply to both web and WeChat
-    loading.value = true
-    try {
-      const messageWithContext = `[此消息来自微信]\n${text}`
-      const reply = await getLLMResponse(messageWithContext, async (statusText) => {
-        pushMessage('assistant', statusText)
-        forwardToWechat(userId, statusText)
-        await scrollToBottom()
-      })
-      pushMessage('assistant', reply)
-      forwardToWechat(userId, reply)
-    } catch (error) {
-      const errText = error instanceof Error ? error.message : 'Unknown error'
-      pushMessage('assistant', `请求失败: ${errText}`)
-      forwardToWechat(userId, `请求失败: ${errText}`)
-    } finally {
-      loading.value = false
+    if (connected.value && ws) {
+      loading.value = true
+      statusText.value = ''
+      ws.send(JSON.stringify({ type: 'chat', message: `[此消息来自微信]\n${text}` }))
+    } else {
+      pushMessage('assistant', '服务器未连接，无法处理微信消息。')
       await scrollToBottom()
     }
   })
   await scrollToBottom()
+})
+
+onUnmounted(() => {
+  closeCurrentSocket()
 })
 </script>
 
@@ -314,6 +401,27 @@ onMounted(async () => {
   cursor: pointer;
 }
 
+.config-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.conn-status {
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 8px;
+}
+
+.conn-ok {
+  background: #e6f7ec;
+  color: #1a7a38;
+}
+
+.conn-err {
+  background: #fdecea;
+  color: #c62828;
+}
+
 .messages {
   overflow: auto;
   padding: 16px;
@@ -323,6 +431,91 @@ onMounted(async () => {
   margin: 10px 18px 0;
   font-size: 13px;
   color: #2f6f3e;
+}
+
+.dialog-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.32);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 10;
+}
+
+.dialog-card {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  background: #fff;
+  border-radius: 16px;
+  padding: 20px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.18);
+}
+
+.dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.dialog-header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.dialog-close,
+.ghost-btn {
+  border: 1px solid #d0d0d0;
+  background: #fff;
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.form-field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.form-input {
+  border: 1px solid #d9d9d9;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.config-status {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #c62828;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.save-btn {
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 14px;
+  background: #2ca34a;
+  color: #fff;
+  cursor: pointer;
+}
+
+.save-btn:disabled,
+.dialog-close:disabled,
+.ghost-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .row {
@@ -428,61 +621,4 @@ onMounted(async () => {
   cursor: not-allowed;
 }
 
-.overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: grid;
-  place-items: center;
-}
-
-.modal {
-  width: min(520px, 92vw);
-  background: #fff;
-  border-radius: 14px;
-  padding: 16px;
-}
-
-.modal h2 {
-  margin: 0 0 12px;
-}
-
-.field {
-  display: block;
-  margin: 10px 0;
-}
-
-.field span {
-  display: block;
-  font-size: 12px;
-  margin-bottom: 6px;
-}
-
-.field input {
-  width: 100%;
-  border: 1px solid #d9d9d9;
-  border-radius: 8px;
-  padding: 9px;
-}
-
-.actions {
-  margin-top: 14px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-}
-
-.config-error {
-  margin: 12px 0 0;
-  color: #c62828;
-  font-size: 13px;
-}
-
-.ghost {
-  border: 1px solid #d9d9d9;
-  border-radius: 10px;
-  padding: 0 14px;
-  background: #fff;
-  cursor: pointer;
-}
 </style>
