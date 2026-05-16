@@ -37,6 +37,11 @@ function requireConfig(conf, keys) {
 const config = readServerConf();
 requireConfig(config, ['LLM_API_URL', 'LLM_MODEL', 'LLM_API_KEY']);
 
+
+// 启动微信 bot
+const { bot, startBot, getLatestWechatMessage } = require('./wechat-bot');
+startBot().catch((e) => console.error('WeChatBot 启动失败:', e));
+
 const app = express();
 app.use(bodyParser.json());
 
@@ -129,6 +134,36 @@ function applyTextEdits(content, edits) {
 
 async function invokeTool(name, args) {
   const a = args && typeof args === 'object' ? args : {};
+
+  if (name === 'send_file_to_wechat') {
+    const filePath = resolveToolPath(a.path);
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) {
+      throw new Error('path must point to a file');
+    }
+
+    const targetMsg = getLatestWechatMessage(a.userId ? String(a.userId) : '');
+    if (!targetMsg) {
+      throw new Error('未找到可回复的微信会话，请先让目标用户给机器人发送一条消息');
+    }
+
+    const fileName = path.basename(filePath);
+    const ext = path.extname(fileName).toLowerCase();
+    const imageExts = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
+    const videoExts = new Set(['.mp4', '.mov', '.webm']);
+    const route = imageExts.has(ext) ? 'image' : (videoExts.has(ext) ? 'video' : 'attachment');
+
+    const data = fs.readFileSync(filePath);
+    await bot.reply(targetMsg, { file: data, fileName });
+
+    return {
+      ok: true,
+      userId: targetMsg.userId,
+      fileName,
+      path: filePath,
+      route,
+    };
+  }
 
   if (name === 'read') {
     const filePath = resolveToolPath(a.path);
@@ -266,11 +301,30 @@ async function callLLMWithTools(messages, tools, disableThinking = false) {
   return { message, finishReason: choice?.finish_reason };
 }
 
+
+// 推送状态到所有客户端（桌面+微信）
 function wsSend(ws, payload) {
   if (ws.readyState === 1) ws.send(JSON.stringify(payload));
 }
 
-async function generateChatReply(userMessage, onEvent = () => { }) {
+async function sendStatusToAllClients(payload) {
+  // 桌面客户端 WebSocket 广播
+  broadcastToWeb(payload);
+  // 微信端消息推送（如有 msg 对象）
+  if (payload.weixinMsg) {
+    try {
+      await bot.reply(payload.weixinMsg, { text: payload.text || payload.status || '' });
+    } catch (e) {
+      console.error('WeChatBot 发送消息失败:', e);
+    }
+  }
+  // 兼容老的 HTTP 推送方式
+  if (config.WEIXIN_PUSH_URL) {
+    axios.post(config.WEIXIN_PUSH_URL, payload).catch(() => { });
+  }
+}
+
+async function generateChatReply(userMessage, onEvent = sendStatusToAllClients) {
   const rawTools = getToolDefinitions();
   // Replace web_search with $web_search builtin if using Moonshot API
   const isMoonshot = config.LLM_API_URL.includes('moonshot') || config.LLM_API_URL.includes('kimi');
