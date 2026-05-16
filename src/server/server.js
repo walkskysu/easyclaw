@@ -248,12 +248,13 @@ function formatToolStatus(toolName, args) {
   return `调用tool: ${toolName}`;
 }
 
-async function callLLMWithTools(messages, tools) {
+async function callLLMWithTools(messages, tools, disableThinking = false) {
   const requestBody = {
     model: config.LLM_MODEL,
     messages,
     tools,
     tool_choice: 'auto',
+    ...(disableThinking ? { thinking: { type: 'disabled' } } : {}),
   };
   const response = await axios.post(config.LLM_API_URL, requestBody, {
     headers: { Authorization: `Bearer ${config.LLM_API_KEY}`, 'Content-Type': 'application/json' },
@@ -292,7 +293,7 @@ async function generateChatReply(userMessage, onEvent = () => { }) {
   let skillReadCallsUsed = 0;
 
   for (let round = 0; round < 200; round++) {
-    const { message, finishReason } = await callLLMWithTools(messages, tools);
+    const { message, finishReason } = await callLLMWithTools(messages, tools, isMoonshot);
     messages.push(message);
 
     const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
