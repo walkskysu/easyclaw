@@ -80,6 +80,62 @@ function logWrite(filename, entry) {
   fs.appendFileSync(path.join(logDir, filename), entry + '\n', 'utf-8');
 }
 
+// ─── 对话历史 ─────────────────────────────────────────────────────────────────
+
+const historyDir = path.resolve(appRoot, 'history');
+if (!fs.existsSync(historyDir)) fs.mkdirSync(historyDir, { recursive: true });
+
+const latestChatPath = path.join(historyDir, 'latest_chat.json');
+
+function getTodayDateStr() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}${m}${d}`;
+}
+
+function loadLatestChat() {
+  if (!fs.existsSync(latestChatPath)) return [];
+  try {
+    return JSON.parse(fs.readFileSync(latestChatPath, 'utf-8'));
+  } catch {
+    return [];
+  }
+}
+
+function loadLatestChatMessages() {
+  const entries = loadLatestChat();
+  const messages = [];
+  for (const entry of entries) {
+    if (entry.user) messages.push({ role: 'user', content: entry.user });
+    if (entry.assistant) messages.push({ role: 'assistant', content: entry.assistant });
+  }
+  return messages;
+}
+
+function appendConversationHistory(userMessage, assistantReply) {
+  const ts = new Date().toISOString();
+  const entry = { ts, user: userMessage, assistant: assistantReply };
+
+  // 追加到当日历史文件
+  const dateStr = getTodayDateStr();
+  const dailyPath = path.join(historyDir, `${dateStr}.json`);
+  let dailyEntries = [];
+  if (fs.existsSync(dailyPath)) {
+    try { dailyEntries = JSON.parse(fs.readFileSync(dailyPath, 'utf-8')); } catch { dailyEntries = []; }
+  }
+  dailyEntries.push(entry);
+  fs.writeFileSync(dailyPath, JSON.stringify(dailyEntries, null, 2), 'utf-8');
+
+  // 更新 latest_chat.json，保留最近 N 条
+  const latestSize = Math.max(1, parseInt(config.LATEST_CHAT_SIZE || '20', 10));
+  const latestEntries = loadLatestChat();
+  latestEntries.push(entry);
+  const trimmed = latestEntries.slice(-latestSize);
+  fs.writeFileSync(latestChatPath, JSON.stringify(trimmed, null, 2), 'utf-8');
+}
+
 // ─── 工具路径解析 ─────────────────────────────────────────────────────────────
 
 function resolveToolPath(inputPath) {
@@ -362,8 +418,10 @@ async function generateChatReply(userMessage, onEvent = sendStatusToAllClients) 
     : rawTools;
 
   const configuration = getConfiguration();
+  const latestMessages = loadLatestChatMessages();
   const messages = [
     { role: 'system', content: configuration },
+    ...latestMessages,
     { role: 'user', content: userMessage },
   ];
 
@@ -380,6 +438,7 @@ async function generateChatReply(userMessage, onEvent = sendStatusToAllClients) 
     if (toolCalls.length === 0) {
       const text = typeof message.content === 'string' ? message.content.trim() : '';
       if (text) {
+        appendConversationHistory(userMessage, text);
         return text;
       }
       throw new Error('LLM 未返回有效文本');
