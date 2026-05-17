@@ -71,6 +71,9 @@ clawdiy/
 npm install
 ```
 
+如果npm install 失败，有可能是electron包下载失败，请用下列指令修复
+ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm install electron@27.3.11
+
 2. 启动开发模式（推荐）
 
 ```bash

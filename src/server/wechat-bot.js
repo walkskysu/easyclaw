@@ -2,6 +2,7 @@
 // 启动微信对话 bot，并导出 bot 实例
 
 const { WeChatBot } = require('@wechatbot/wechatbot');
+const qrcodeTerminal = require('qrcode-terminal');
 
 const bot = new WeChatBot();
 const latestMsgByUserId = new Map();
@@ -14,9 +15,10 @@ async function startBot() {
                 console.log('\n============================================');
                 console.log('Scan this QR code in WeChat to login:');
                 console.log('============================================');
+                qrcodeTerminal.generate(url, { small: true });
+                console.log('QR URL fallback:');
                 console.log(url);
-                console.log('QR login required at startup. Exiting process.\n');
-                process.exit(0);
+                console.log('QR login required at startup. Waiting for scan...\n');
             },
             onScanned: () => console.log('QR scanned, please confirm in WeChat'),
             onExpired: () => console.log('QR expired, requesting new one...'),
