@@ -89,6 +89,7 @@ npm run electron-dev
 
 ```ini
 port=8080
+server_ip=127.0.0.1
 LLM_API_URL=https://api.openai.com/v1/chat/completions
 LLM_MODEL=gpt-4o-mini
 LLM_API_KEY=your-api-key
@@ -107,6 +108,7 @@ server_url=http://localhost:8080
 - `LLM_API_URL`: OpenAI 兼容聊天接口地址
 - `LLM_MODEL`: 模型名称
 - `LLM_API_KEY`: 接口密钥
+- `server_ip`: 服务端监听 IP（默认 `127.0.0.1`）
 - `MAX_TOOL_ROUNDS`: 单次请求允许的工具调用总次数上限
 - `MAX_SKILL_READ_CALLS`: 单次请求允许读取 Skill 文档次数上限
 - `server_url`: 客户端通过 WebSocket 连接的 server 地址
