@@ -8,7 +8,15 @@ const bot = new WeChatBot();
 const latestMsgByUserId = new Map();
 let latestMsg = null;
 
-async function startBot() {
+function getErrorText(error) {
+    if (!error) return 'unknown error';
+    if (typeof error === 'string') return error;
+    if (error instanceof Error) return error.message;
+    return String(error);
+}
+
+async function startBot(options = {}) {
+    const onUserMessage = typeof options.onUserMessage === 'function' ? options.onUserMessage : null;
     const creds = await bot.login({
         callbacks: {
             onQrUrl: (url) => {
@@ -38,8 +46,31 @@ async function startBot() {
             latestMsgByUserId.set(msg.userId, msg);
         }
         latestMsg = msg || null;
+
+        if (!msg?.userId) {
+            return;
+        }
+
+        const userText = typeof msg?.text === 'string' ? msg.text : '';
         await bot.sendTyping(msg.userId);
-        await bot.reply(msg, `Echo: ${msg.text}`);
+
+        if (!onUserMessage) {
+            await bot.reply(msg, `Echo: ${userText}`);
+            return;
+        }
+
+        try {
+            const replyText = await onUserMessage({ msg, text: userText });
+            const finalReply = typeof replyText === 'string' && replyText.trim()
+                ? replyText
+                : '模型未返回有效内容';
+            console.log(`[WeChat][LLM][OK] userId=${msg.userId} input=${userText}`);
+            await bot.reply(msg, finalReply);
+        } catch (error) {
+            const errText = getErrorText(error);
+            console.error(`[WeChat][LLM][Error] userId=${msg.userId} input=${userText} error=${errText}`);
+            await bot.reply(msg, `大模型调用失败: ${errText}`);
+        }
     });
     await bot.start();
     console.log('WeChatBot started');

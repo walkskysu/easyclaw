@@ -40,7 +40,33 @@ requireConfig(config, ['LLM_API_URL', 'LLM_MODEL', 'LLM_API_KEY']);
 
 // 启动微信 bot
 const { bot, startBot, getLatestWechatMessage } = require('./wechat-bot');
-startBot().catch((e) => console.error('WeChatBot 启动失败:', e));
+startBot({
+  onUserMessage: async ({ msg, text }) => {
+    const userText = typeof text === 'string' ? text : '';
+    logWrite('weixin.log', `[${new Date().toISOString()}] weixin(bot): ${JSON.stringify({ userId: msg?.userId, text: userText })}`);
+    try {
+      const llmReply = await generateChatReply(userText, (payload) => {
+        broadcastToWeb(payload);
+        if (payload?.type === 'status' && typeof payload.text === 'string' && payload.text.trim()) {
+          bot.reply(msg, payload.text).catch((e) => {
+            console.error('WeChatBot 状态消息发送失败:', e);
+          });
+        }
+      });
+      const payload = { source: 'weixin', input: userText, reply: llmReply, userId: msg?.userId, ts: new Date().toISOString() };
+      broadcastToWeb(payload);
+      logWrite('weixin.log', `[${new Date().toISOString()}] llm(bot): ${JSON.stringify(payload)}`);
+      return llmReply;
+    } catch (error) {
+      const message = axios.isAxiosError(error)
+        ? (error.response?.data?.error?.message || error.message)
+        : (error instanceof Error ? error.message : String(error));
+      logWrite('weixin.log', `[${new Date().toISOString()}] error(bot): ${message}`);
+      console.error('WeChatBot 大模型调用失败:', message);
+      throw new Error(message);
+    }
+  },
+}).catch((e) => console.error('WeChatBot 启动失败:', e));
 
 const app = express();
 app.use(bodyParser.json());
