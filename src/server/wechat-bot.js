@@ -8,7 +8,29 @@ const latestMsgByUserId = new Map();
 let latestMsg = null;
 
 async function startBot() {
-    await bot.login();
+    const creds = await bot.login({
+        callbacks: {
+            onQrUrl: (url) => {
+                console.log('\n============================================');
+                console.log('Scan this QR code in WeChat to login:');
+                console.log('============================================');
+                console.log(url);
+                console.log('QR login required at startup. Exiting process.\n');
+                process.exit(0);
+            },
+            onScanned: () => console.log('QR scanned, please confirm in WeChat'),
+            onExpired: () => console.log('QR expired, requesting new one...'),
+        },
+    });
+
+    if (!creds) {
+        throw new Error('WeChat login failed: empty credentials');
+    }
+
+    console.log(`Logged in as ${creds.accountId}`);
+    console.log(`User: ${creds.userId}`);
+    console.log(`API: ${creds.baseUrl}\n`);
+
     bot.onMessage(async (msg) => {
         if (msg?.userId) {
             latestMsgByUserId.set(msg.userId, msg);
