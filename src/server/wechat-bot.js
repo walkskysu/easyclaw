@@ -7,6 +7,20 @@ const qrcodeTerminal = require('qrcode-terminal');
 const bot = new WeChatBot();
 const latestMsgByUserId = new Map();
 let latestMsg = null;
+const originalLogin = bot.login.bind(bot);
+let loginInFlight = null;
+
+bot.login = async function serializedLogin(options = {}) {
+    if (loginInFlight) {
+        return loginInFlight;
+    }
+
+    loginInFlight = originalLogin(options).finally(() => {
+        loginInFlight = null;
+    });
+
+    return loginInFlight;
+};
 
 function getErrorText(error) {
     if (!error) return 'unknown error';
