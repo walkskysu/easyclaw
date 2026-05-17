@@ -505,8 +505,9 @@ app.post('/api/weixin/message', async (req, res) => {
 });
 
 const port = config.port || 8080;
-server.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+const host = String(config.server_ip || '127.0.0.1').trim() || '127.0.0.1';
+server.listen(port, host, () => {
+  console.log(`Server running on ${host}:${port}`);
   console.log(`LLM_API_URL=${config.LLM_API_URL}`);
   console.log(`LLM_MODEL=${config.LLM_MODEL}`);
 });
